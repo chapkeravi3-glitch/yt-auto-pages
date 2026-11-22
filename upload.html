@@ -1,318 +1,36 @@
-<!DOCTYPE html>
-<html lang="hi">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>फ़ोटो/क्लिप लाइब्रेरी अपलोडर</title>
-<style>
-  :root { --bg:#12161c; --card:#1c222b; --line:#2e3744; --txt:#e8ecf1; --mut:#97a3b3; --acc:#ffd23f; --ok:#4cd37b; --bad:#ff6b6b; }
-  * { box-sizing: border-box; }
-  body { margin:0; padding:16px; background:var(--bg); color:var(--txt); font-family: system-ui, -apple-system, "Noto Sans Devanagari", sans-serif; font-size:16px; }
-  h1 { font-size:22px; margin:4px 0 14px; }
-  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; margin-bottom:14px; }
-  label { display:block; font-size:14px; color:var(--mut); margin:10px 0 4px; }
-  input, select, button { width:100%; padding:12px; font-size:16px; border-radius:10px; border:1px solid var(--line); background:#0f1318; color:var(--txt); }
-  button { background:var(--acc); color:#111; font-weight:700; border:none; margin-top:12px; }
-  button.sec { background:#2a3340; color:var(--txt); }
-  button:disabled { opacity:.5; }
-  details summary { cursor:pointer; font-weight:600; }
-  .hint { color:var(--mut); font-size:13px; margin-top:6px; line-height:1.45; }
-  .bar { height:10px; background:#0f1318; border-radius:6px; overflow:hidden; margin-top:10px; }
-  .bar > div { height:100%; width:0; background:var(--ok); transition:width .2s; }
-  #log { font-size:13px; line-height:1.5; max-height:220px; overflow:auto; margin-top:8px; white-space:pre-wrap; }
-  .ok { color:var(--ok); } .bad { color:var(--bad); }
-  .folders div { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); font-size:15px; }
-  .thumbs { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
-  .thumbs img { width:64px; height:64px; object-fit:cover; border-radius:8px; }
-</style>
-</head>
-<body>
-<h1>📸 फ़ोटो/क्लिप लाइब्रेरी अपलोडर</h1>
-
-<div class="card">
-  <details id="settings">
-    <summary>⚙️ सेटिंग (सिर्फ़ पहली बार)</summary>
-    <label>GitHub यूज़रनाम</label>
-    <input id="owner" placeholder="जैसे: ravi123" autocapitalize="none" autocomplete="off">
-    <label>बॉट वाली repository का नाम</label>
-    <input id="repo" placeholder="जैसे: yt-auto-bot" autocapitalize="none" autocomplete="off">
-    <label>Branch</label>
-    <input id="branch" value="main" autocapitalize="none">
-    <label>GitHub Token (सिर्फ़ इसी repository के लिए)</label>
-    <input id="token" type="password" placeholder="github_pat_..." autocomplete="off">
-    <p class="hint">
-      Token बनाने का तरीका: GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token.
-      Repository access में <b>सिर्फ़ बॉट वाली repository</b> चुनें, और Permissions में <b>Contents: Read and write</b> दें।
-      यह token सिर्फ़ आपके इसी फ़ोन के ब्राउज़र में रहता है, कहीं और नहीं जाता।
-    </p>
-    <button class="sec" id="saveBtn" type="button">सेटिंग सेव करो</button>
-  </details>
-</div>
-
-<div class="card">
-  <label>चैनल / श्रेणी</label>
-  <select id="category">
-    <option value="cricket">cricket (क्रिकेट चैनल)</option>
-    <option value="movies">movies (मूवीज़ चैनल)</option>
-    <option value="fact">fact (Fact India)</option>
-  </select>
-
-  <label>फ़ोटो किसकी है? (अंग्रेज़ी में नाम)</label>
-  <input id="name" list="folderList" placeholder="जैसे: virat kohli, india team, hanuman" autocapitalize="none" autocomplete="off">
-  <datalist id="folderList"></datalist>
-  <p class="hint">
-    हर नाम का अलग फ़ोल्डर बनेगा। नाम वही लिखो जो आम तौर पर अंग्रेज़ी में लिखा जाता है, जैसे <b>rohit sharma</b>, <b>india team</b>, <b>india vs pakistan</b>।
-    किसी भी टॉपिक की आम फ़ोटो (स्टेडियम, भीड़, मैदान) के लिए नाम में <b>general</b> लिखो।
-  </p>
-
-  <label>फ़ोटो या वीडियो क्लिप चुनो (कई एक साथ)</label>
-  <input id="files" type="file" accept="image/*,video/*" multiple>
-  <p class="hint">वीडियो क्लिप छोटी रखो (5-15 सेकंड, 30 MB से कम)। बड़ी क्लिप नहीं जाएँगी और repository भी भारी हो जाएगी।</p>
-  <div class="thumbs" id="thumbs"></div>
-
-  <button id="uploadBtn" type="button">⬆️ अपलोड करो</button>
-  <div class="bar"><div id="prog"></div></div>
-  <div id="log"></div>
-</div>
-
-<div class="card">
-"use strict";
-const $ = (id) => document.getElementById(id);
-const LS = "photoLibUploader.v1";
-
-function loadCfg() {
-  try { return JSON.parse(localStorage.getItem(LS) || "{}"); } catch (e) { return {}; }
-}
-function saveCfg() {
-  const cfg = { owner: $("owner").value.trim(), repo: $("repo").value.trim(),
-                branch: $("branch").value.trim() || "main", token: $("token").value.trim() };
-  try { localStorage.setItem(LS, JSON.stringify(cfg)); } catch (e) { logLine("सेटिंग सेव नहीं हो पाई (ब्राउज़र ने रोका)", true); }
-  return cfg;
-}
-function getCfg() {
-  return { owner: $("owner").value.trim(), repo: $("repo").value.trim(),
-           branch: $("branch").value.trim() || "main", token: $("token").value.trim() };
-}
-function ready(c) { return c.owner && c.repo && c.token; }
-
-function logLine(msg, bad) {
-  const d = document.createElement("div");
-  d.textContent = msg;
-  if (bad === true) d.className = "bad";
-  if (bad === false) d.className = "ok";
-  $("log").appendChild(d);
-  $("log").scrollTop = $("log").scrollHeight;
-}
-
-function slug(s) {
-  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
-function api(cfg, path, opts) {
-  return fetch("https://api.github.com/repos/" + encodeURIComponent(cfg.owner) + "/" + encodeURIComponent(cfg.repo) + path,
-    Object.assign({ headers: { "Authorization": "Bearer " + cfg.token, "Accept": "application/vnd.github+json" } }, opts || {}));
-}
-
-// फ़ोटो को छोटा करके (अधिकतम 1600px) JPEG बनाता है, ताकि repository भारी न हो
-async function toJpegBase64(file) {
-  const bmp = await createImageBitmap(file);
-  const max = 1600;
-  const r = Math.min(1, max / Math.max(bmp.width, bmp.height));
-  const w = Math.round(bmp.width * r), h = Math.round(bmp.height * r);
-  const cv = document.createElement("canvas");
-  cv.width = w; cv.height = h;
-  cv.getContext("2d").drawImage(bmp, 0, 0, w, h);
-  const blob = await new Promise((res) => cv.toBlob(res, "image/jpeg", 0.86));
-  const buf = await blob.arrayBuffer();
-  let bin = "";
-  const bytes = new Uint8Array(buf);
-  const chunk = 0x8000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-  }
-  return { b64: btoa(bin), kb: Math.round(bytes.length / 1024), w: w, h: h };
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-const VID_EXT = ["mp4", "mov", "webm", "mkv", "m4v"];
-function isVideo(f) {
-  const ext = (f.name.split(".").pop() || "").toLowerCase();
-  return (f.type || "").indexOf("video/") === 0 || VID_EXT.indexOf(ext) >= 0;
-}
-function vidExt(f) {
-  const ext = (f.name.split(".").pop() || "").toLowerCase();
-  return VID_EXT.indexOf(ext) >= 0 ? ext : "mp4";
-}
-// वीडियो को जस का तस base64 में बदलता है (कोई कंप्रेस नहीं)
-function fileToBase64(file) {
-  return new Promise((res, rej) => {
-    const fr = new FileReader();
-    fr.onload = () => res(String(fr.result).split(",")[1] || "");
-    fr.onerror = () => rej(new Error("फ़ाइल पढ़ नहीं पाया"));
-    fr.readAsDataURL(file);
-  });
-}
-
-async function putFile(cfg, path, b64, msg) {
-  let lastErr = "";
-  for (let attempt = 0; attempt < 4; attempt++) {
-    let resp;
-    try {
-      resp = await api(cfg, "/contents/" + path.split("/").map(encodeURIComponent).join("/"), {
-        method: "PUT",
-        headers: { "Authorization": "Bearer " + cfg.token, "Accept": "application/vnd.github+json", "Content-Type": "application/json" },
-        body: JSON.stringify({ message: msg, content: b64, branch: cfg.branch })
-      });
-    } catch (e) {
-      lastErr = "नेटवर्क दिक्कत (" + e.message + "), थोड़ी देर बाद फिर कोशिश करो";
-      await sleep(3000 * (attempt + 1));
-      continue;
-    }
-    if (resp.ok) return true;
-    let detail = "";
-    try { detail = (await resp.json()).message || ""; } catch (e) { /* ignore */ }
-    const low = detail.toLowerCase();
-    if (resp.status === 401) {
-      throw new Error("token गलत है या ख़त्म हो गया (401: " + detail + "). नया token बनाओ");
-    }
-    if (resp.status === 404) {
-      throw new Error("repository नहीं मिली, या token को उसकी अनुमति नहीं (404). सेटिंग में repository का नाम जाँचो और token में 'Only select repositories' में yt-auto-bot चुनो");
-    }
-    if (resp.status === 403 && (low.indexOf("rate limit") >= 0 || low.indexOf("secondary") >= 0 || low.indexOf("abuse") >= 0)) {
-      lastErr = "GitHub ने रफ़्तार रोकी (" + detail + ")";
-      await sleep(15000 * (attempt + 1));
-      continue;
-    }
-    if (resp.status === 403) {
-      throw new Error("token को लिखने की अनुमति नहीं (403: " + detail + "). token की Permissions में Contents को 'Read and write' करो");
-    }
-    if (resp.status === 409 || resp.status === 429) {
-      lastErr = resp.status + " " + detail;
-      await sleep(5000 * (attempt + 1));
-      continue;
-    }
-    throw new Error(resp.status + " " + detail);
-  }
-  throw new Error(lastErr || "GitHub ने बार-बार रोका, थोड़ी देर बाद फिर कोशिश करो");
-}
-
-async function doUpload() {
-  const cfg = saveCfg();
-  if (!ready(cfg)) { $("settings").open = true; logLine("पहले ऊपर सेटिंग भरो (यूज़रनाम, repository, token)", true); return; }
-  const name = slug($("name").value);
-  const cat = $("category").value;
-  const files = Array.from($("files").files || []);
-  if (!name) { logLine("फ़ोटो किसकी है, उसका नाम लिखो", true); return; }
-  if (name.split("-").length > 4) { logLine("नाम बहुत लंबा है। सिर्फ़ 2-3 शब्द लिखो, जैसे shubman gill, india team", true); return; }
-  if (!files.length) { logLine("पहले फ़ोटो चुनो", true); return; }
-  $("uploadBtn").disabled = true;
-  $("prog").style.width = "0%";
-  let done = 0, fail = 0, streak = 0;
-  const stamp = Date.now().toString(36);
-  for (let i = 0; i < files.length; i++) {
-    const f = files[i];
-    try {
-      if (isVideo(f)) {
-        const mb = f.size / 1048576;
-        if (mb > 30) { throw new Error("क्लिप बहुत बड़ी है (" + mb.toFixed(1) + " MB), 30 MB से छोटी रखो"); }
-        const b64v = await fileToBase64(f);
-        const pathv = "photos/" + cat + "/" + name + "/" + stamp + "-" + (i + 1) + "." + vidExt(f);
-        await putFile(cfg, pathv, b64v, "क्लिप जोड़ी: " + cat + "/" + name);
-        done++;
-        streak = 0;
-        logLine("✔ " + (i + 1) + "/" + files.length + " क्लिप " + name + " (" + mb.toFixed(1) + " MB)", false);
-      } else {
-        const img = await toJpegBase64(f);
-        const path = "photos/" + cat + "/" + name + "/" + stamp + "-" + (i + 1) + ".jpg";
-        await putFile(cfg, path, img.b64, "फ़ोटो जोड़ी: " + cat + "/" + name);
-        done++;
-        streak = 0;
-        logLine("✔ " + (i + 1) + "/" + files.length + " " + name + " (" + img.w + "x" + img.h + ", " + img.kb + " KB)", false);
-      }
-    } catch (e) {
-      fail++;
-      streak++;
-      logLine("✘ " + (i + 1) + "/" + files.length + " " + f.name + ": " + e.message, true);
-      if (streak >= 2) {
-        logLine("लगातार 2 फ़ोटो फेल हुईं, इसलिए रुक गया। ऊपर की गलती ठीक करके फिर अपलोड दबाओ।", true);
-        break;
-      }
-    }
-    $("prog").style.width = Math.round(((i + 1) / files.length) * 100) + "%";
-    await sleep(1500);
-  }
-  logLine("पूरा: " + done + " अपलोड, " + fail + " फेल", fail ? true : false);
-  $("uploadBtn").disabled = false;
-  if (done) { $("files").value = ""; $("thumbs").innerHTML = ""; refresh(); }
-}
-
-async function refresh() {
-  const cfg = getCfg();
-  if (!ready(cfg)) { return; }
-  try {
-    const resp = await api(cfg, "/git/trees/" + encodeURIComponent(cfg.branch) + "?recursive=1");
-    if (resp.status === 404) { $("folders").innerHTML = '<div style="color:var(--mut)">repository/branch नहीं मिली, सेटिंग जाँचो</div>'; return; }
-    if (!resp.ok) { $("folders").innerHTML = '<div class="bad">लिस्ट नहीं मिली (' + resp.status + ')</div>'; return; }
-    const data = await resp.json();
-    const counts = {};
-    (data.tree || []).forEach((t) => {
-      const m = /^photos\/([^/]+)\/([^/]+)\/[^/]+$/.exec(t.path);
-      if (m && t.type === "blob") { const k = m[1] + "/" + m[2]; counts[k] = (counts[k] || 0) + 1; }
-    });
-    const keys = Object.keys(counts).sort();
-    const box = $("folders");
-    box.innerHTML = "";
-    if (!keys.length) { box.innerHTML = '<div style="color:var(--mut)">अभी कोई फ़ोटो नहीं है</div>'; }
-    keys.forEach((k) => {
-      const row = document.createElement("div");
-      const a = document.createElement("span"); a.textContent = k;
-      const b = document.createElement("span"); b.textContent = counts[k] + " फ़ोटो";
-      row.appendChild(a); row.appendChild(b); box.appendChild(row);
-    });
-    const dl = $("folderList");
-    dl.innerHTML = "";
-    const cat = $("category").value;
-    keys.filter((k) => k.indexOf(cat + "/") === 0).forEach((k) => {
-      const o = document.createElement("option"); o.value = k.split("/")[1]; dl.appendChild(o);
-    });
-  } catch (e) {
-    $("folders").innerHTML = '<div class="bad">नेटवर्क दिक्कत: ' + e.message + "</div>";
-  }
-}
-
-function showThumbs() {
-  const box = $("thumbs");
-  box.innerHTML = "";
-  Array.from($("files").files || []).slice(0, 30).forEach((f) => {
-    if (isVideo(f)) {
-      const v = document.createElement("div");
-      v.textContent = "🎬";
-      v.style.cssText = "width:64px;height:64px;border-radius:8px;background:#2a3340;display:flex;align-items:center;justify-content:center;font-size:28px";
-      box.appendChild(v);
-      return;
-    }
-    const im = document.createElement("img");
-    im.src = URL.createObjectURL(f);
-    im.onload = () => URL.revokeObjectURL(im.src);
-    box.appendChild(im);
-  });
-}
-
-(function init() {
-  const c = loadCfg();
-  $("owner").value = c.owner || "";
-  $("repo").value = c.repo || "";
-  $("branch").value = c.branch || "main";
-  $("token").value = c.token || "";
-  if (!ready(c)) { $("settings").open = true; }
-  $("saveBtn").addEventListener("click", () => { saveCfg(); logLine("सेटिंग सेव हो गई", false); refresh(); });
-  $("uploadBtn").addEventListener("click", doUpload);
-  $("refreshBtn").addEventListener("click", refresh);
-  $("files").addEventListener("change", showThumbs);
-  $("category").addEventListener("change", refresh);
-  refresh();
-})();
-</script>
-</body>
-</html>
+<!DOCTYPE html><html lang="hi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>फ़ोटो/क्लिप अपलोडर</title>
+<style>body{margin:0;padding:16px;background:#12161c;color:#e8ecf1;font:16px system-ui,sans-serif}input,select,button{width:100%;padding:12px;margin:6px 0;font-size:16px;border-radius:10px;border:1px solid #2e3744;background:#0f1318;color:#e8ecf1;box-sizing:border-box}button{background:#ffd23f;color:#111;font-weight:700;border:0}#log div{font-size:14px;margin:4px 0}.ok{color:#4cd37b}.bad{color:#ff6b6b}small{color:#97a3b3}</style></head><body>
+<h2>📸 फ़ोटो/क्लिप अपलोडर</h2>
+<details id="s"><summary>⚙️ सेटिंग</summary>
+<input id="o" placeholder="GitHub यूज़रनाम" autocapitalize="none"><input id="r" placeholder="repository का नाम" autocapitalize="none"><input id="t" type="password" placeholder="token"><button id="sv">सेव करो</button></details>
+<select id="c"><option>cricket</option><option>movies</option><option>fact</option></select>
+<input id="n" placeholder="नाम (अंग्रेज़ी, 2-3 शब्द) जैसे shubman gill, या general" autocapitalize="none">
+<input id="f" type="file" accept="image/*,video/*" multiple>
+<small>क्लिप 30 MB से छोटी रखो</small>
+<button id="u">⬆️ अपलोड करो</button><div id="log"></div>
+<script>
+const $=i=>document.getElementById(i),sl=ms=>new Promise(r=>setTimeout(r,ms)),K="plu2";
+function cfg(){return{o:$("o").value.trim(),r:$("r").value.trim(),t:$("t").value.trim()}}
+function lg(m,b){const d=document.createElement("div");d.textContent=m;d.className=b===true?"bad":b===false?"ok":"";$("log").appendChild(d)}
+try{const c=JSON.parse(localStorage.getItem(K)||"{}");$("o").value=c.o||"";$("r").value=c.r||"";$("t").value=c.t||"";if(!(c.o&&c.r&&c.t))$("s").open=true}catch(e){$("s").open=true}
+$("sv").onclick=()=>{try{localStorage.setItem(K,JSON.stringify(cfg()));lg("सेव हो गया",false)}catch(e){lg("सेव नहीं हुआ",true)}};
+const slug=s=>s.toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-+|-+$/g,"");
+const isV=f=>(f.type||"").startsWith("video/")||/\.(mp4|mov|webm|mkv|m4v)$/i.test(f.name);
+function b64(x){return new Promise((res,rej)=>{const fr=new FileReader();fr.onload=()=>res(String(fr.result).split(",")[1]||"");fr.onerror=()=>rej(new Error("फ़ाइल नहीं पढ़ी"));fr.readAsDataURL(x)})}
+async function img(file){const bm=await createImageBitmap(file);const r=Math.min(1,1600/Math.max(bm.width,bm.height));const cv=document.createElement("canvas");cv.width=Math.round(bm.width*r);cv.height=Math.round(bm.height*r);cv.getContext("2d").drawImage(bm,0,0,cv.width,cv.height);const bl=await new Promise(x=>cv.toBlob(x,"image/jpeg",0.86));return b64(bl)}
+async function put(c,path,data,msg){let last="";for(let a=0;a<4;a++){let rs;try{rs=await fetch("https://api.github.com/repos/"+c.o+"/"+c.r+"/contents/"+path,{method:"PUT",headers:{Authorization:"Bearer "+c.t,Accept:"application/vnd.github+json","Content-Type":"application/json"},body:JSON.stringify({message:msg,content:data,branch:"main"})})}catch(e){last="नेटवर्क दिक्कत";await sl(3000*(a+1));continue}
+if(rs.ok)return;let d="";try{d=(await rs.json()).message||""}catch(e){}const l=d.toLowerCase();
+if(rs.status==401)throw new Error("token गलत या ख़त्म (401)");
+if(rs.status==404)throw new Error("repository नहीं मिली या token को अनुमति नहीं (404)");
+if(rs.status==403&&/rate|secondary|abuse/.test(l)){last="GitHub ने रफ़्तार रोकी";await sl(15000*(a+1));continue}
+if(rs.status==403)throw new Error("token को लिखने की अनुमति नहीं (403): Contents को Read and write करो");
+if(rs.status==409||rs.status==429){last=d;await sl(5000*(a+1));continue}
+throw new Error(rs.status+" "+d)}throw new Error(last||"GitHub ने रोका")}
+$("u").onclick=async()=>{const c=cfg();if(!c.o||!c.r||!c.t){$("s").open=true;lg("पहले सेटिंग भरो",true);return}
+const nm=slug($("n").value);if(!nm){lg("नाम लिखो",true);return}if(nm.split("-").length>4){lg("नाम छोटा रखो (2-3 शब्द)",true);return}
+const fs=Array.from($("f").files||[]);if(!fs.length){lg("फ़ाइल चुनो",true);return}
+$("u").disabled=true;const cat=$("c").value,st=Date.now().toString(36);let ok=0,bad=0,sk=0;
+for(let i=0;i<fs.length;i++){const f=fs[i];try{let d,ext;if(isV(f)){if(f.size>31457280)throw new Error("क्लिप 30 MB से बड़ी है");d=await b64(f);ext=(f.name.split(".").pop()||"mp4").toLowerCase();if(!/^(mp4|mov|webm|mkv|m4v)$/.test(ext))ext="mp4"}else{d=await img(f);ext="jpg"}
+await put(c,"photos/"+cat+"/"+nm+"/"+st+"-"+(i+1)+"."+ext,d,"जोड़ा: "+cat+"/"+nm);ok++;sk=0;lg("✔ "+(i+1)+"/"+fs.length,false)}catch(e){bad++;sk++;lg("✘ "+(i+1)+"/"+fs.length+" "+f.name+": "+e.message,true);if(sk>=2){lg("लगातार 2 फेल, रुक गया",true);break}}await sl(1500)}
+lg("पूरा: "+ok+" अपलोड, "+bad+" फेल",bad>0);$("u").disabled=false};
+</script></body></html>
